@@ -7,6 +7,7 @@ import streamlit as st
 # === Minimal implementations to avoid circular imports ===
 import re
 import subprocess
+import platform
 
 def ascii_safe(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9 .:-]", "", text)
@@ -205,8 +206,11 @@ def main():
     st.title("Podcast Smalltalk Cutter 🎧")
     st.caption("Choose a local folder/file or upload an audio file, then click Run.")
 
-    # Input mode
-    mode = st.radio("Input mode", ["Folder scan", "Upload"], horizontal=True)
+    # Input mode (on web/Linux, disable Folder scan; default to Upload)
+    available_modes = ["Upload", "Folder scan"] if platform.system() == "Windows" else ["Upload"]
+    mode = st.radio("Input mode", available_modes, horizontal=True, index=0)
+    if "Folder scan" not in available_modes:
+        st.info("Folder scan is disabled on web deployments. Use Upload instead.")
 
     # Helper to persist an uploaded file to a temp path
     def _save_upload(uploaded) -> Path:
