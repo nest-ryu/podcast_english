@@ -5,4 +5,5 @@ openai-whisper==20250625
 numba==0.62.1
 llvmlite==0.45.1
 torch==2.9.0
+imageio-ffmpeg>=0.4.9
 
