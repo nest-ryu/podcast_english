@@ -8,6 +8,7 @@ import streamlit as st
 import re
 import subprocess
 import platform
+import shutil
 
 def ascii_safe(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9 .:-]", "", text)
@@ -127,9 +128,20 @@ def run_pipeline(src: Path, model_for_final: str = "base"):
     start_sec, end_sec = 40, 160
     duration = end_sec - start_sec
     try:
+        # Resolve ffmpeg path (system or bundled via imageio-ffmpeg)
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if not ffmpeg_bin:
+            try:
+                import imageio_ffmpeg as iioff
+                ffmpeg_bin = iioff.get_ffmpeg_exe()
+            except Exception:
+                ffmpeg_bin = None
+        if not ffmpeg_bin:
+            st.error("ffmpeg not found. On web: add 'imageio-ffmpeg' to requirements. On server: install ffmpeg.")
+            raise FileNotFoundError("ffmpeg not available")
         # Re-encode for compatibility
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_bin, "-y",
             "-ss", str(start_sec),
             "-t", str(duration),
             "-i", str(src),
@@ -138,7 +150,7 @@ def run_pipeline(src: Path, model_for_final: str = "base"):
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as e:
-        st.error("ffmpeg cutting failed. Ensure ffmpeg is installed and in PATH.")
+        st.error("ffmpeg cutting failed. Ensure ffmpeg is available (PATH or imageio-ffmpeg).")
         raise e
 
     st.write(f"Step 2: Final transcription ({model_for_final})…")
