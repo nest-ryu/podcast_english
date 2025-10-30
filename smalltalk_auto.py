@@ -6,6 +6,7 @@ import streamlit as st
 
 # === Minimal implementations to avoid circular imports ===
 import re
+import subprocess
 
 def ascii_safe(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9 .:-]", "", text)
@@ -119,30 +120,44 @@ def derive_base_name(src: Path) -> str:
 
 
 def run_pipeline(src: Path, model_for_final: str = "base"):
-    from pydub import AudioSegment
-
-    st.write("Step 1: Extracting first 3 minutes…")
-    audio = AudioSegment.from_file(src)
-    three_min_audio = audio[: 3 * 60 * 1000]
-
-    st.write("Step 2: Cutting fixed section 40s→160s…")
-    precise_dialogue = three_min_audio[40 * 1000 : 160 * 1000]
+    # Cut via ffmpeg to avoid pydub/audioop issues
+    st.write("Step 1: Cutting fixed section 40s→160s…")
     tmp_precise = src.parent / "_st_tmp_precise.mp3"
-    precise_dialogue.export(tmp_precise, format="mp3")
+    start_sec, end_sec = 40, 160
+    duration = end_sec - start_sec
+    try:
+        # Re-encode for compatibility
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_sec),
+            "-t", str(duration),
+            "-i", str(src),
+            "-acodec", "libmp3lame", "-b:a", "192k",
+            str(tmp_precise),
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except Exception as e:
+        st.error("ffmpeg cutting failed. Ensure ffmpeg is installed and in PATH.")
+        raise e
 
-    st.write(f"Step 3: Final transcription ({model_for_final})…")
+    st.write(f"Step 2: Final transcription ({model_for_final})…")
     tr = transcribe_audio_whisper(tmp_precise, model_size=model_for_final)
+
+    # Prepare final outputs
+    base_name = derive_base_name(src)
+    mp3_out = src.parent / f"{base_name}.mp3"
+    try:
+        # Save/copy the cut audio as final MP3
+        with open(tmp_precise, "rb") as rf, open(mp3_out, "wb") as wf:
+            wf.write(rf.read())
+    except Exception:
+        pass
 
     # Cleanup tmp file
     try:
         tmp_precise.unlink(missing_ok=True)
     except Exception:
         pass
-
-    # Build outputs
-    base_name = derive_base_name(src)
-    mp3_out = src.parent / f"{base_name}.mp3"
-    precise_dialogue.export(mp3_out, format="mp3")
 
     eng_sentences = re.split(r"(?<=[.!?])\s+", tr.get("text", "").strip())
     eng_sentences = [s.strip() for s in eng_sentences if s.strip()]
@@ -188,39 +203,62 @@ def render_downloads():
 def main():
     st.set_page_config(page_title="Podcast Smalltalk Cutter", page_icon="🎧", layout="centered")
     st.title("Podcast Smalltalk Cutter 🎧")
-    st.caption("Select a local folder and audio file, then click Run.")
+    st.caption("Choose a local folder/file or upload an audio file, then click Run.")
+
+    # Input mode
+    mode = st.radio("Input mode", ["Folder scan", "Upload"], horizontal=True)
+
+    # Helper to persist an uploaded file to a temp path
+    def _save_upload(uploaded) -> Path:
+        # Preserve original file name to allow proper episode/title parsing
+        orig_name = Path(uploaded.name).name
+        # sanitize illegal path chars for Windows
+        safe_name = re.sub(r'[\\/:*?"<>|]+', '_', orig_name)
+        temp_path = Path.cwd() / safe_name
+        with open(temp_path, "wb") as f:
+            f.write(uploaded.read())
+        return temp_path
 
     # Downloads render inline after processing
 
-    default_dir = str(Path.cwd())
-    root_dir = st.text_input("Folder to scan (absolute path)", value=default_dir)
-
-    dir_path = Path(root_dir).expanduser().resolve()
-    if not dir_path.exists():
-        st.error("Folder does not exist.")
-        return
-
-    audio_files = sorted(
-        [
-            Path(p)
-            for p in glob.glob(str(dir_path / "*.mp3"))
-            + glob.glob(str(dir_path / "*.m4a"))
-            + glob.glob(str(dir_path / "*.wav"))
-        ]
-    )
-
-    if not audio_files:
-        st.info("No audio files (.mp3/.m4a/.wav) found in this folder.")
-        return
-
-    file_labels = [f.name for f in audio_files]
-    choice = st.selectbox("Select an audio file", file_labels, index=0)
-    chosen = audio_files[file_labels.index(choice)]
-
+    chosen_path: Path | None = None
     model_final = st.selectbox("Final transcription model", ["base", "small", "tiny"], index=0)
 
+    if mode == "Folder scan":
+        default_dir = str(Path.cwd())
+        root_dir = st.text_input("Folder to scan (absolute path)", value=default_dir)
+
+        dir_path = Path(root_dir).expanduser().resolve()
+        if not dir_path.exists():
+            st.info("Folder does not exist.")
+        else:
+            audio_files = sorted(
+                [
+                    Path(p)
+                    for p in glob.glob(str(dir_path / "*.mp3"))
+                    + glob.glob(str(dir_path / "*.m4a"))
+                    + glob.glob(str(dir_path / "*.wav"))
+                ]
+            )
+
+            if not audio_files:
+                st.info("No audio files (.mp3/.m4a/.wav) found in this folder.")
+            else:
+                file_labels = [f.name for f in audio_files]
+                choice = st.selectbox("Select an audio file", file_labels, index=0)
+                chosen_path = audio_files[file_labels.index(choice)]
+
+    else:  # Upload mode
+        up = st.file_uploader("Upload audio file (.mp3/.m4a/.wav)", type=["mp3", "m4a", "wav"], accept_multiple_files=False)
+        if up:
+            chosen_path = _save_upload(up)
+            st.success(f"Uploaded: {chosen_path.name}")
+
     if st.button("Run", type="primary"):
-        run_pipeline(chosen, model_for_final=model_final)
+        if chosen_path and chosen_path.exists():
+            run_pipeline(chosen_path, model_for_final=model_final)
+        else:
+            st.error("Please select a valid audio file first.")
 
 
 if __name__ == "__main__":
