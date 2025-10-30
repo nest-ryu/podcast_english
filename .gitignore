@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Streamlit
+.streamlit/
+
+# Local caches / tmp
+*_tmp_*.mp3
+_st_tmp_*.mp3
+transcript_analysis.txt
+
+# Outputs
+*.mp3
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+

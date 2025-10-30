@@ -1,0 +1,8 @@
+streamlit==1.37.0
+pydub==0.25.1
+reportlab==4.4.4
+openai-whisper==20250625
+numba==0.62.1
+llvmlite==0.45.1
+torch==2.9.0
+
